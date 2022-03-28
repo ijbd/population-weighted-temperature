@@ -5,3 +5,4 @@ population-data
 control-areas-shp
 src/restructure_cdf.py
 
+src/__pycache__/
