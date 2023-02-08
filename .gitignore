@@ -1,1 +1,9 @@
+bal_auth_status.csv
+gallery
+conus-temperature-data
+population-data
+control-areas-shp
+src/restructure_cdf.py
+src/__pycache__/
+summary.csv
 env
