@@ -1,9 +1,8 @@
 bal_auth_status.csv
 gallery
-conus-temperature-data
+merra-temperature-data
 era5-temperature-data
 population-data
-control-areas-shp
 src/restructure_cdf.py
 src/__pycache__/
 summary.csv

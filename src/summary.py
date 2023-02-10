@@ -1,3 +1,9 @@
+'''
+Generate summary statistics for population-weighted temperature output.
+
+author: ijbd
+'''
+
 import os
 from numpy import mean, std, percentile
 import pandas as pd
