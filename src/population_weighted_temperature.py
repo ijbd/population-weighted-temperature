@@ -10,6 +10,7 @@ from pathlib import Path
 from datetime import datetime, timedelta
 
 # external
+import numpy as np
 import xarray as xr
 import pandas as pd
 import geopandas as gpd
@@ -159,33 +160,41 @@ def get_resolution(coord: xr.DataArray):
     '''
     return float(abs(coord[1] - coord[0]))
 
-def upscale_and_align(
-    high_res_arr: xr.DataArray,
-    low_res_arr: xr.DataArray,
+def upscale_and_align_pop(
+    high_res_pop_arr: xr.DataArray,
+    low_res_temp_arr: xr.DataArray,
     method: str) -> xr.DataArray:
     '''
     Upscale and align a high-resolution array to fit a low-resolution array. 
     Upscaling method is either 'average' (e.g. temperature) or 'accumulate' (e.g. population)
     '''
     # check input
-    assert get_resolution(high_res_arr.coords['latitude']) < get_resolution(low_res_arr.coords['latitude'])
-    assert get_resolution(high_res_arr.coords['longitude']) < get_resolution(low_res_arr.coords['longitude'])
+    assert get_resolution(high_res_pop_arr.coords['latitude']) < get_resolution(low_res_temp_arr.coords['latitude'])
+    assert get_resolution(high_res_pop_arr.coords['longitude']) < get_resolution(low_res_temp_arr.coords['longitude'])
     assert method in ['average', 'accumulate']
 
     # make accumulation arrays
-    accum = xr.zeros_like(low_res_arr.sel(time=low_res_arr.coords['time'][0]))
-    count = xr.zeros_like(low_res_arr.sel(time=low_res_arr.coords['time'][0]))
+    accum = xr.DataArray(
+        data=np.zeros((low_res_temp_arr.sizes['latitude'], low_res_temp_arr.sizes['longitude'])),
+        coords=dict(
+            latitude=low_res_temp_arr.latitude,
+            longitude=low_res_temp_arr.longitude
+        ),
+        name=high_res_pop_arr.name,
+        attrs=high_res_pop_arr.attrs
+    )
+    count = accum.copy()
 
-    for lat_idx, lat in enumerate(high_res_arr.coords['latitude']):
-        for lon_idx, lon in enumerate(high_res_arr.coords['longitude']):
+    for lat_idx, lat in enumerate(high_res_pop_arr.coords['latitude']):
+        for lon_idx, lon in enumerate(high_res_pop_arr.coords['longitude']):
 
-            lat_low_res_idx = get_nearest_idx(lat, low_res_arr.coords['latitude'])
-            lon_low_res_idx = get_nearest_idx(lon, low_res_arr.coords['longitude'])
+            lat_low_res_idx = get_nearest_idx(lat, low_res_temp_arr.coords['latitude'])
+            lon_low_res_idx = get_nearest_idx(lon, low_res_temp_arr.coords['longitude'])
 
-            accum[lat_low_res_idx, lon_low_res_idx] += high_res_arr[lat_idx, lon_idx]
+            accum[lat_low_res_idx, lon_low_res_idx] += high_res_pop_arr[lat_idx, lon_idx]
             count[lat_low_res_idx, lon_low_res_idx] += 1
 
-        log.info(f'\t\tMapped {lat_idx} of {len(high_res_arr.coords["latitude"])}...')
+        log.info(f'\t\tMapped {lat_idx} of {len(high_res_pop_arr.coords["latitude"])}...')
 
     return accum if method == 'accumulate' else accum / count
 
@@ -194,7 +203,7 @@ def rasterize_shape(shape: gpd.GeoDataFrame, arr: xr.DataArray) -> xr.DataArray:
     Rasterize a geopandas shape to fit into an DataArray. 
     '''
     mapped = xr.zeros_like(arr)
-    
+
     for lat_idx, lat in enumerate(arr.coords['latitude']):
         for lon_idx, lon in enumerate(arr.coords['longitude']):
             if shape.contains(Point(lon,lat)).any():
@@ -204,58 +213,22 @@ def rasterize_shape(shape: gpd.GeoDataFrame, arr: xr.DataArray) -> xr.DataArray:
             
     return mapped
 
-def get_weighted_average(arr: xr.DataArray, weights: xr.DataArray):
-    '''
-    return weighted average of an array based on a parallel array of weights.
-    '''	
-    print(arr, weights)
-    weighted_average = xr.sum()) / xr.sum(weights)
-
-    return weighted_average
-
-def get_8760_dt_index(year: int):
-    '''
-    return 8760 datetime index without leap days for a given year.
-    '''
-    dt_arr = xr.arange(datetime(year,1,1),datetime(year+1,1,1), timedelta(hours=1))
-
-    index = pd.DatetimeIndex(dt_arr)
-
-    # remove leap days
-    index = index[~((index.month == 2) & (index.day == 29))]
-
-    return index
-
-def get_series_from_hourly_data(hourly_data: xr.DataArray, year: int) -> pd.DataFrame:
-    '''
-    return pandas datetime-indexed dataframe for an hourly time series
-    '''
-    hourly_index = get_8760_dt_index(year)
-
-    return pd.Series(hourly_data, hourly_index)
-
-def save_output(df: pd.DataFrame, output_file: str) -> None:
-
-    df.round(2).to_csv(output_file)
-
-    return None
-
-def plot_temp(temp, lats, lons, fname):
+def plot_temp(temp, fname):
 
     fig, ax = plt.subplots()
 
-    temp_c = xr.mean(temp,axis=2) - 273
+    temp_c = temp.mean(dim='time') - 273
 
     pos = ax.imshow(temp_c, origin='lower')
     ax.grid(False)
     cbar = fig.colorbar(pos, ax=ax, extend='both')
     cbar.set_label('Mean Temperature ($\\degree$C)')
 
-    steps = max(len(lats),len(lons),5)//5
-    ax.set_xticks(xr.arange(len(lons))[::steps])
-    ax.set_xticklabels(lons[::steps].astype(int))
-    ax.set_yticks(xr.arange(len(lats))[::steps])
-    ax.set_yticklabels(lats[::steps].astype(int))
+    steps = max(temp.sizes['latitude'], temp.sizes['longitude'],5)//5
+    ax.set_xticks(np.arange(temp.sizes['longitude'])[::steps])
+    ax.set_xticklabels(temp.longitude[::steps].values.astype(int))
+    ax.set_yticks(np.arange(temp.sizes['latitude'])[::steps])
+    ax.set_yticklabels(temp.latitude[::steps].values.astype(int))
 
     ax.set_xlabel('Longitude ($\degree$)')
     ax.set_ylabel('Latitude ($\degree$)')
@@ -265,20 +238,20 @@ def plot_temp(temp, lats, lons, fname):
 
     return None
 
-def plot_pop(pop, lats, lons, fname):
+def plot_pop(pop, fname):
 
     fig, ax = plt.subplots()
 
-    pos = ax.imshow(xr.where(pop, pop, xr.nan), norm=colors.LogNorm(), origin='lower')
+    pos = ax.imshow(pop.where(pop, np.nan), norm=colors.LogNorm(), origin='lower')
     ax.grid(False)
     cbar = fig.colorbar(pos, ax=ax, extend='both')
     cbar.set_label('Population Density (Persons per km$^2$)')
 
-    steps = max(len(lats),len(lons),10)//5
-    ax.set_xticks(xr.arange(len(lons))[::steps])
-    ax.set_xticklabels(lons[::steps].round(1))
-    ax.set_yticks(xr.arange(len(lats))[::steps])
-    ax.set_yticklabels(lats[::steps].round(1))
+    steps = max(pop.sizes['latitude'], pop.sizes['longitude'],5)//5
+    ax.set_xticks(np.arange(pop.sizes['longitude'])[::steps])
+    ax.set_xticklabels(pop.longitude[::steps].values.astype(int))
+    ax.set_yticks(np.arange(pop.sizes['latitude'])[::steps])
+    ax.set_yticklabels(pop.latitude[::steps].values.astype(int))
 
     ax.set_xlabel('Longitude ($\degree$)')
     ax.set_ylabel('Latitude ($\degree$)')
@@ -287,6 +260,21 @@ def plot_pop(pop, lats, lons, fname):
     plt.close()
 
     return None
+
+def plot_weighted_unweighted(weighted, unweighted, fname):
+
+    fig, ax = plt.subplots()
+
+    ax.scatter(weighted, unweighted)
+    
+    ax.set_xlabel('Hourly Population-weighted Temperature (K)')
+    ax.set_ylabel('Hourly Unweighted Mean Temperature (K)')
+
+    plt.savefig(fname)
+    plt.close()
+
+    return None
+
 
 def set_centroid(arr, val):
     '''
@@ -343,11 +331,10 @@ def main(
 
     # align coordinates
     log.info('Upscaling population to fit temperature data.')
-    pop = upscale_and_align(high_res_arr=pop, low_res_arr=temp, method='average')
+    pop = upscale_and_align_pop(high_res_pop_arr=pop, low_res_temp_arr=temp, method='accumulate')
     
-    log.info('Finished upscaling...')
-
     # map balancing authority bounds to population array
+    log.info('Rasterizing balancing authority map array...')
     bal_auth_map = rasterize_shape(shape=bal_auth_shape, arr=pop)
 
     # if no coordinates are in balancing authority, use the centroid coordinate
@@ -363,26 +350,30 @@ def main(
         set_centroid(bal_auth_pop, 1)
 
     # get population weighted temperature
-    pop_weighted_temp = get_weighted_average(arr=temp, weights=bal_auth_pop)
+    pop_weighted_temp = (temp * bal_auth_pop).sum(dim=('latitude', 'longitude'))/bal_auth_pop.sum()
+    pop_weighted_temp_ds = pop_weighted_temp.rename('Temperature (K)').to_pandas()
 
-    print(pop_weighted_temp)
-    return
-    output_df = pd.DataFrame()
-    output_df['Temperature (K)'] = get_series_from_hourly_data(pop_weighted_temp, year)
+    # get average temperature
+    unweighted_mean_temp = (temp * bal_auth_map).sum(dim=('latitude', 'longitude'))/bal_auth_map.sum()
+    unweighted_mean_temp_ds = unweighted_mean_temp.rename('Temperature (K)').to_pandas()
 
     # save
-    output_file = Path(OUTPUT_DIR, f'{area_name}-{year}-pop-weighted-temperature.csv')
+    pop_weighted_temp_file = Path(OUTPUT_DIR, f'{area_name}-{year}-pop-weighted-temperature.csv')
+    pop_weighted_temp_ds.round(2).to_csv(pop_weighted_temp_file)
 
-    save_output(output_df, output_file)
+    unweighted_mean_temp_file = Path(OUTPUT_DIR, f'{area_name}-{year}-unweighted-mean-temperature.csv')
+    unweighted_mean_temp_ds.round(2).to_csv(unweighted_mean_temp_file)
 
     # plot
     plt.style.use('ggplot')
 
     pop_plot_file = Path(GALLERY_DIR, f'{area_name}-{year}-pop-map.png')
     temp_plot_file = Path(GALLERY_DIR, f'{area_name}-{year}-temp-map.png')
+    weighted_unweighted_plot_file = Path(GALLERY_DIR, f'{area_name}-{year}-weighted-unweighted-scatter.png')
 
-    plot_pop(bal_auth_pop, lats, lons, pop_plot_file)
-    plot_temp(temp, lats, lons, temp_plot_file)
+    plot_pop(bal_auth_pop, pop_plot_file)
+    plot_temp(temp, temp_plot_file)
+    plot_weighted_unweighted(pop_weighted_temp, unweighted_mean_temp, weighted_unweighted_plot_file)
 
     return None
 
