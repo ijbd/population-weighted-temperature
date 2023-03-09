@@ -7,3 +7,5 @@ src/restructure_cdf.py
 src/__pycache__/
 summary.csv
 env
+*.tar
+control-areas-shp

@@ -297,7 +297,7 @@ def main(
     year: int, 
     area_name: str,
     bal_auth_list: list,
-    reanalysis_temperature_file: Path, 
+    reanalysis_temperature_file: Path,
     pop_year: int=2020):
     '''
     Generate population-weighted temperature series for a given balancing authority.
